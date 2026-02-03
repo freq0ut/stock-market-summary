@@ -1,0 +1,9 @@
+# Config files with secrets
+stocksum.conf
+
+# Logs and daily data
+logs/
+
+# Temporary files
+*.tmp
+*.bak

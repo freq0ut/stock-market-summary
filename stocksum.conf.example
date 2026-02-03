@@ -1,0 +1,8 @@
+# Stock Market Summary Configuration
+
+# Email settings
+email_to="your-email@example.com"
+email_from="alerts@your-domain.com"
+
+# Anthropic API key for AI insights
+anthropic_api_key="sk-ant-api03-your-key-here"
