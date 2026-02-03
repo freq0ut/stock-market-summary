@@ -714,7 +714,10 @@ send_email() {
     return 1
   fi
 
-  msmtp -a gmail "$email_to" << MAIL
+  # Convert comma-separated emails to space-separated for msmtp
+  local recipients="${email_to//,/ }"
+
+  msmtp -a gmail $recipients << MAIL
 From: $email_from
 To: $email_to
 Subject: $subject
