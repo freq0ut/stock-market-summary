@@ -1,9 +1,23 @@
 # Stock Market Summary Configuration
 
-# Email settings (multiple recipients supported, comma-separated)
-email_to="your-email@example.com"
-# email_to="email1@example.com,email2@example.com,email3@example.com"
+# Email settings
 email_from="alerts@your-domain.com"
+
+# Test mode email (only this address receives test reports)
+email_test="your-email@example.com"
+
+# Email recipients with cadence
+# Format: "email|cadence" where cadence is: all, open, intra, close
+# Use comma-separated values for multiple report types: "open,close"
+# "all" means all reports (open, intra, close)
+email_recipients=(
+  "your-email@example.com|all"           # Receives all 3 daily reports
+  "someone-else@example.com|close"       # Only receives market close report
+  "morning-person@example.com|open"      # Only receives market open report
+)
+
+# Legacy single-recipient format (still supported for backwards compatibility)
+# email_to="your-email@example.com"
 
 # Anthropic API key for AI insights
 anthropic_api_key="sk-ant-api03-your-key-here"
