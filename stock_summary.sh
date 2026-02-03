@@ -696,7 +696,12 @@ Be direct. Use **bold** for emphasis."
   content=$(echo "$response" | jq -r '.content[0].text // empty' 2>/dev/null)
 
   if [[ -n "$content" ]]; then
-    echo "$content" | sed 's/\*\*\([^*]*\)\*\*/<strong>\1<\/strong>/g'
+    # Convert markdown to HTML
+    echo "$content" | sed \
+      -e 's/^### \(.*\)$/<h4 style="color:#1e40af;margin:15px 0 8px 0;font-size:15px">\1<\/h4>/g' \
+      -e 's/^## \(.*\)$/<h3 style="color:#1e40af;margin:15px 0 8px 0;font-size:16px">\1<\/h3>/g' \
+      -e 's/\*\*\([^*]*\)\*\*/<strong>\1<\/strong>/g' \
+      -e 's/$/<br>/'
   else
     echo "AI insights unavailable"
   fi
@@ -807,7 +812,7 @@ run_summary() {
 
   local ai_insights
   ai_insights=$(generate_ai_insights "$plain_data" "$report_type")
-  local ai_html=$(echo "$ai_insights" | sed 's/$/<br>/g')
+  local ai_html="$ai_insights"
 
   # Build summary HTML (needs global vars set by build_html_report)
   local summary_file=$(mktemp)
