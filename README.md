@@ -51,8 +51,9 @@ A bash-based tool that sends AI-powered stock market summary emails 3x daily (ma
 Create this file with your settings (not tracked by git):
 
 ```bash
-# Email settings
+# Email settings (multiple recipients supported, comma-separated)
 email_to="your-email@example.com"
+# or: email_to="email1@example.com,email2@example.com,email3@example.com"
 email_from="alerts@your-domain.com"
 
 # Anthropic API key for AI insights
