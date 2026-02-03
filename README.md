@@ -51,14 +51,32 @@ A bash-based tool that sends AI-powered stock market summary emails 3x daily (ma
 Create this file with your settings (not tracked by git):
 
 ```bash
-# Email settings (multiple recipients supported, comma-separated)
-email_to="your-email@example.com"
-# or: email_to="email1@example.com,email2@example.com,email3@example.com"
+# Email settings
 email_from="alerts@your-domain.com"
+
+# Test mode email (only this address receives test reports)
+email_test="your-email@example.com"
+
+# Email recipients with cadence
+# Format: "email|cadence" where cadence is: all, open, intra, close
+# "all" means all reports (open, intra, close)
+email_recipients=(
+  "your-email@example.com|all"           # Receives all 3 daily reports
+  "someone-else@example.com|close"       # Only receives market close report
+)
 
 # Anthropic API key for AI insights
 anthropic_api_key="sk-ant-api03-your-key-here"
 ```
+
+**Cadence options:**
+- `all` - Receive all reports (open, intra, close)
+- `open` - Receive only market open report
+- `intra` - Receive only intraday report
+- `close` - Receive only market close report
+- `open,close` - Receive multiple specific reports (comma-separated)
+
+**Note:** Recipients are BCC'd so they cannot see other recipients on the email.
 
 ### watchlist.conf
 
@@ -143,7 +161,7 @@ Each email includes:
 
 1. **Summary Box**
    - Best/worst performing ticker
-   - Best/worst performing category
+   - Top 3 and bottom 3 performing categories
    - Market breadth bar (advancing/declining/unchanged)
 
 2. **Category Tables**
