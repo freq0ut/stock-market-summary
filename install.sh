@@ -231,7 +231,7 @@ echo "=============================================="
 echo
 echo "Default schedule (US Eastern Time):"
 echo "  - Market Open:  9:35 AM ET (Mon-Fri)"
-echo "  - Midday:      12:30 PM ET (Mon-Fri)"
+echo "  - Intraday:    12:30 PM ET (Mon-Fri)"
 echo "  - Market Close: 4:05 PM ET (Mon-Fri)"
 echo
 
@@ -246,8 +246,8 @@ TZ=America/New_York
 # Market open (9:35 AM ET - 5 min after open)
 35 9 * * 1-5 /usr/local/sbin/stock_summary.sh open
 
-# Midday (12:30 PM ET)
-30 12 * * 1-5 /usr/local/sbin/stock_summary.sh midday
+# Intraday (12:30 PM ET)
+30 12 * * 1-5 /usr/local/sbin/stock_summary.sh intra
 
 # Market close (4:05 PM ET - 5 min after close)
 5 16 * * 1-5 /usr/local/sbin/stock_summary.sh close"
@@ -297,7 +297,7 @@ echo "Logs: /var/log/stock-summary/"
 echo
 echo "Commands:"
 echo "  Test:    sudo -u $run_user -H /usr/local/sbin/stock_summary.sh test"
-echo "  Manual:  sudo -u $run_user -H /usr/local/sbin/stock_summary.sh {open|midday|close}"
+echo "  Manual:  sudo -u $run_user -H /usr/local/sbin/stock_summary.sh {open|intra|close}"
 echo
 echo "To edit your watchlist:"
 echo "  sudo -u $run_user nano $user_home/.watchlist.conf"

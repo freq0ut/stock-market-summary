@@ -16,12 +16,56 @@ log_dir="$script_dir/logs"
 # Defaults (overridden by config file)
 email_to=""
 email_from=""
+email_test=""
+email_recipients=()
 anthropic_api_key=""
 
 # Load config
 if [[ -f "$config_file" ]]; then
   source "$config_file"
 fi
+
+# Get recipients for a given report type
+# Usage: get_recipients_for_report "open|intra|close|test"
+get_recipients_for_report() {
+  local report_type="$1"
+  local recipients=""
+
+  # Test mode: only send to test email
+  if [[ "$report_type" == "test" ]]; then
+    echo "$email_test"
+    return
+  fi
+
+  # If using old-style email_to (backwards compatibility)
+  if [[ ${#email_recipients[@]} -eq 0 && -n "$email_to" ]]; then
+    echo "$email_to"
+    return
+  fi
+
+  # Filter recipients by cadence
+  for entry in "${email_recipients[@]}"; do
+    local email="${entry%%|*}"
+    local cadence="${entry##*|}"
+
+    # Check if this recipient should receive this report type
+    local should_send=false
+    if [[ "$cadence" == "all" ]]; then
+      should_send=true
+    elif [[ "$cadence" == *"$report_type"* ]]; then
+      should_send=true
+    fi
+
+    if [[ "$should_send" == "true" ]]; then
+      if [[ -n "$recipients" ]]; then
+        recipients+=","
+      fi
+      recipients+="$email"
+    fi
+  done
+
+  echo "$recipients"
+}
 
 # Retry settings
 MAX_RETRIES=3
@@ -32,10 +76,6 @@ SUMMARY_BEST_TICKER=""
 SUMMARY_BEST_TICKER_PCT=""
 SUMMARY_WORST_TICKER=""
 SUMMARY_WORST_TICKER_PCT=""
-SUMMARY_BEST_CATEGORY=""
-SUMMARY_BEST_CATEGORY_PCT=""
-SUMMARY_WORST_CATEGORY=""
-SUMMARY_WORST_CATEGORY_PCT=""
 SUMMARY_ADVANCERS=0
 SUMMARY_DECLINERS=0
 SUMMARY_UNCHANGED=0
@@ -43,16 +83,19 @@ BREADTH_UP_PCT=0
 BREADTH_DOWN_PCT=0
 BREADTH_FLAT_PCT=0
 
+# Array to store all category averages for ranking (format: "pct|category")
+CATEGORY_RANKINGS=()
+
 # Temp file for HTML building
 HTML_FILE=""
 
-# Daily data file for tracking progression (open/midday/close)
+# Daily data file for tracking progression (open/intra/close)
 DAILY_DATA_FILE=""
 CURRENT_REPORT_TYPE=""
 
 # Associative arrays for daily progression
 declare -A DAILY_OPEN_AVG=()
-declare -A DAILY_MIDDAY_AVG=()
+declare -A DAILY_INTRA_AVG=()
 declare -A DAILY_CLOSE_AVG=()
 DAILY_DATA_SAVED=false
 
@@ -277,7 +320,7 @@ html_line() {
 # ============================================
 load_daily_data() {
   DAILY_OPEN_AVG=()
-  DAILY_MIDDAY_AVG=()
+  DAILY_INTRA_AVG=()
   DAILY_CLOSE_AVG=()
 
   if [[ ! -f "$DAILY_DATA_FILE" ]]; then
@@ -288,7 +331,7 @@ load_daily_data() {
     [[ -z "$category" || "$category" == "#"* ]] && continue
     case "$report_type" in
       open)   DAILY_OPEN_AVG["$category"]="$avg_pct" ;;
-      midday) DAILY_MIDDAY_AVG["$category"]="$avg_pct" ;;
+      intra) DAILY_INTRA_AVG["$category"]="$avg_pct" ;;
       close)  DAILY_CLOSE_AVG["$category"]="$avg_pct" ;;
     esac
   done < "$DAILY_DATA_FILE"
@@ -319,13 +362,13 @@ get_category_progression_html() {
 
   # Get previous values
   local open_val="${DAILY_OPEN_AVG[$category]:-}"
-  local midday_val="${DAILY_MIDDAY_AVG[$category]:-}"
+  local intra_val="${DAILY_INTRA_AVG[$category]:-}"
 
   case "$CURRENT_REPORT_TYPE" in
     open)
       # First report of day - no previous data
       ;;
-    midday)
+    intra)
       # Show open if available
       if [[ -n "$open_val" ]]; then
         local open_sign=""
@@ -335,12 +378,12 @@ get_category_progression_html() {
       fi
       ;;
     close)
-      # Show midday then open (descending chronological order)
-      if [[ -n "$midday_val" ]]; then
+      # Show intra then open (descending chronological order)
+      if [[ -n "$intra_val" ]]; then
         local mid_sign=""
-        [[ "${midday_val:0:1}" != "-" ]] && mid_sign="+"
-        local mid_color=$(get_color "$midday_val")
-        progression_html+="<div style=\"font-size:13px;color:#6b7280;margin-top:4px\">Midday: <span style=\"color:${mid_color};font-weight:500\">${mid_sign}${midday_val}%</span></div>"
+        [[ "${intra_val:0:1}" != "-" ]] && mid_sign="+"
+        local mid_color=$(get_color "$intra_val")
+        progression_html+="<div style=\"font-size:13px;color:#6b7280;margin-top:4px\">Intra: <span style=\"color:${mid_color};font-weight:500\">${mid_sign}${intra_val}%</span></div>"
       fi
       if [[ -n "$open_val" ]]; then
         local open_sign=""
@@ -448,8 +491,9 @@ build_html_report() {
 
   local best_ticker="" best_ticker_pct=-9999
   local worst_ticker="" worst_ticker_pct=9999
-  local best_category="" best_category_pct=-9999
-  local worst_category="" worst_category_pct=9999
+
+  # Reset category rankings array
+  CATEGORY_RANKINGS=()
 
   # Start Market Overview
   cat >> "$HTML_FILE" << 'HTMLBLOCK'
@@ -520,16 +564,6 @@ HTMLBLOCK
     if (( cat_count > 0 )); then
       local avg_pct=$(printf "%.2f" $(echo "scale=4; $cat_total_pct / $cat_count" | bc -l))
 
-      # Track best/worst category
-      if (( $(echo "$avg_pct > $best_category_pct" | bc -l) )); then
-        best_category_pct="$avg_pct"
-        best_category="$category"
-      fi
-      if (( $(echo "$avg_pct < $worst_category_pct" | bc -l) )); then
-        worst_category_pct="$avg_pct"
-        worst_category="$category"
-      fi
-
       local avg_sign=""
       [[ "${avg_pct:0:1}" != "-" && "$avg_pct" != "0"* ]] && avg_sign="+"
       [[ "$avg_pct" == "."* ]] && avg_sign="+"
@@ -538,7 +572,10 @@ HTMLBLOCK
       # Save this category's average to daily data file
       save_category_avg "$category" "$avg_pct"
 
-      # Get progression HTML from earlier today (midday, open - in descending order)
+      # Store for category rankings (exclude INDICES)
+      CATEGORY_RANKINGS+=("${avg_pct}|${category}")
+
+      # Get progression HTML from earlier today (intra, open - in descending order)
       local progression_html=$(get_category_progression_html "$category")
 
       cat >> "$HTML_FILE" << HTMLCAT
@@ -568,22 +605,14 @@ HTMLROW
   echo "</div>" >> "$HTML_FILE"
 
   # Set global summary variables
-  local best_sign="" worst_sign="" best_cat_sign="" worst_cat_sign=""
+  local best_sign="" worst_sign=""
   [[ "${best_ticker_pct:0:1}" != "-" ]] && best_sign="+"
   [[ "${worst_ticker_pct:0:1}" != "-" ]] && worst_sign="+"
-  [[ "${best_category_pct:0:1}" != "-" && "$best_category_pct" != "0"* ]] && best_cat_sign="+"
-  [[ "${worst_category_pct:0:1}" != "-" && "$worst_category_pct" != "0"* ]] && worst_cat_sign="+"
-  [[ "$best_category_pct" == "."* ]] && best_cat_sign="+"
-  [[ "$worst_category_pct" == "."* ]] && worst_cat_sign="+"
 
   SUMMARY_BEST_TICKER="$best_ticker"
   SUMMARY_BEST_TICKER_PCT="${best_sign}${best_ticker_pct}%"
   SUMMARY_WORST_TICKER="$worst_ticker"
   SUMMARY_WORST_TICKER_PCT="${worst_sign}${worst_ticker_pct}%"
-  SUMMARY_BEST_CATEGORY="$best_category"
-  SUMMARY_BEST_CATEGORY_PCT="${best_cat_sign}${best_category_pct}%"
-  SUMMARY_WORST_CATEGORY="$worst_category"
-  SUMMARY_WORST_CATEGORY_PCT="${worst_cat_sign}${worst_category_pct}%"
   SUMMARY_ADVANCERS="$total_up"
   SUMMARY_DECLINERS="$total_down"
   SUMMARY_UNCHANGED="$total_unchanged"
@@ -601,6 +630,28 @@ HTMLROW
 # Build Summary HTML
 # ============================================
 build_summary_html() {
+  # Get top 3 and bottom 3 categories
+  local top3=$(printf '%s\n' "${CATEGORY_RANKINGS[@]}" | sort -t'|' -k1 -rn | head -3)
+  local bottom3=$(printf '%s\n' "${CATEGORY_RANKINGS[@]}" | sort -t'|' -k1 -n | head -3)
+
+  # Build top 3 HTML
+  local top3_html=""
+  while IFS='|' read -r pct category; do
+    [[ -z "$category" ]] && continue
+    local sign=""
+    [[ "${pct:0:1}" != "-" ]] && sign="+"
+    top3_html+="<div style=\"font-size:14px;margin:4px 0\">• ${category} <span style=\"color:#4ade80;font-weight:600\">${sign}${pct}%</span></div>"
+  done <<< "$top3"
+
+  # Build bottom 3 HTML
+  local bottom3_html=""
+  while IFS='|' read -r pct category; do
+    [[ -z "$category" ]] && continue
+    local sign=""
+    [[ "${pct:0:1}" != "-" ]] && sign="+"
+    bottom3_html+="<div style=\"font-size:14px;margin:4px 0\">• ${category} <span style=\"color:#f87171;font-weight:600\">${sign}${pct}%</span></div>"
+  done <<< "$bottom3"
+
   cat >> "$HTML_FILE" << HTMLSUMMARY
 <div style="background:linear-gradient(135deg,#1e3a5f 0%,#2d5a87 100%);color:white;padding:20px;border-radius:12px;margin-bottom:25px">
 <h2 style="margin:0 0 10px 0;font-size:20px">Summary</h2>
@@ -614,12 +665,12 @@ build_summary_html() {
 <div style="font-size:16px;font-weight:600">${SUMMARY_WORST_TICKER} <span style="color:#f87171">${SUMMARY_WORST_TICKER_PCT}</span></div>
 </div>
 <div style="background:rgba(255,255,255,0.1);padding:12px;border-radius:8px">
-<div style="font-size:12px;opacity:0.8;margin-bottom:4px">Best Category</div>
-<div style="font-size:16px;font-weight:600">${SUMMARY_BEST_CATEGORY} <span style="color:#4ade80">${SUMMARY_BEST_CATEGORY_PCT}</span></div>
+<div style="font-size:12px;opacity:0.8;margin-bottom:8px">Top Categories</div>
+${top3_html}
 </div>
 <div style="background:rgba(255,255,255,0.1);padding:12px;border-radius:8px">
-<div style="font-size:12px;opacity:0.8;margin-bottom:4px">Worst Category</div>
-<div style="font-size:16px;font-weight:600">${SUMMARY_WORST_CATEGORY} <span style="color:#f87171">${SUMMARY_WORST_CATEGORY_PCT}</span></div>
+<div style="font-size:12px;opacity:0.8;margin-bottom:8px">Bottom Categories</div>
+${bottom3_html}
 </div>
 </div>
 <div style="margin-top:15px">
@@ -640,6 +691,35 @@ HTMLSUMMARY
 }
 
 # ============================================
+# Fetch news headlines for market context
+# ============================================
+fetch_news_headlines() {
+  local headlines=""
+
+  # Fetch from Google News RSS - Business/Finance topics
+  local rss_urls=(
+    "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en"  # Business
+    "https://news.google.com/rss/search?q=stock+market+OR+federal+reserve+OR+tariffs+OR+economy&hl=en-US&gl=US&ceid=US:en"  # Market keywords
+  )
+
+  for url in "${rss_urls[@]}"; do
+    local rss_content
+    rss_content=$(curl -s --max-time 10 "$url" 2>/dev/null)
+    if [[ -n "$rss_content" ]]; then
+      # Extract titles from RSS (get first 5 from each feed)
+      local titles
+      titles=$(echo "$rss_content" | grep -oP '(?<=<title>)[^<]+' | grep -v "Google News" | head -5)
+      if [[ -n "$titles" ]]; then
+        headlines+="$titles"$'\n'
+      fi
+    fi
+  done
+
+  # Deduplicate and limit to 10 headlines
+  echo "$headlines" | sort -u | head -10
+}
+
+# ============================================
 # Generate AI insights
 # ============================================
 generate_ai_insights() {
@@ -651,33 +731,48 @@ generate_ai_insights() {
     return 0
   fi
 
+  # Fetch recent news headlines for context
+  log "Fetching news headlines..." >&2
+  local news_headlines
+  news_headlines=$(fetch_news_headlines)
+
   local time_context=""
   case "$report_type" in
     open)   time_context="This is the MARKET OPEN report. Focus on overnight developments and what to watch today." ;;
-    midday) time_context="This is the MIDDAY report. Focus on morning momentum and sector rotation." ;;
-    close)  time_context="This is the MARKET CLOSE report. Summarize the day's action and key takeaways." ;;
+    intra) time_context="This is the INTRADAY report. Focus on morning momentum and sector rotation." ;;
+    close)
+      time_context="This is the MARKET CLOSE report. Summarize the day's action and key takeaways."
+      ;;
   esac
+
+  local news_section=""
+  if [[ -n "$news_headlines" ]]; then
+    news_section="
+RECENT NEWS HEADLINES (use these to attribute market moves to real events):
+${news_headlines}
+"
+  fi
 
   local prompt="You are a concise market analyst. Analyze this data and provide insights.
 
 ${time_context}
-
-DATA:
+${news_section}
+MARKET DATA:
 ${market_data}
 
-Provide analysis (150-200 words) covering:
+Provide analysis covering:
 1. Overall sentiment
-2. Notable movers
+2. Notable movers - attribute significant moves to news events when possible
 3. Sector observations
-4. One key insight
+4. One key insight connecting market action to current events
 
-Be direct. Use **bold** for emphasis."
+Be direct and concise. Use **bold** for emphasis."
 
   local json_payload
   json_payload=$(jq -n \
     --arg model "claude-sonnet-4-20250514" \
     --arg prompt "$prompt" \
-    '{model: $model, max_tokens: 500, messages: [{role: "user", content: $prompt}]}')
+    '{model: $model, max_tokens: 700, messages: [{role: "user", content: $prompt}]}')
 
   local response
   response=$(curl -s --max-time 30 \
@@ -697,11 +792,15 @@ Be direct. Use **bold** for emphasis."
 
   if [[ -n "$content" ]]; then
     # Convert markdown to HTML
+    # - Convert ### and ## headers (with tighter bottom margin to reduce gap before first paragraph)
+    # - Convert **bold** to <strong>
+    # - Add <br> to all lines except headers
+    # - Remove <br> immediately after headers (from empty lines in AI response)
     echo "$content" | sed \
-      -e 's/^### \(.*\)$/<h4 style="color:#1e40af;margin:15px 0 8px 0;font-size:15px">\1<\/h4>/g' \
-      -e 's/^## \(.*\)$/<h3 style="color:#1e40af;margin:15px 0 8px 0;font-size:16px">\1<\/h3>/g' \
+      -e 's/^### \(.*\)$/<h4 style="color:#1e40af;margin:15px 0 4px 0;font-size:15px">\1<\/h4>/g' \
+      -e 's/^## \(.*\)$/<h3 style="color:#1e40af;margin:15px 0 4px 0;font-size:16px">\1<\/h3>/g' \
       -e 's/\*\*\([^*]*\)\*\*/<strong>\1<\/strong>/g' \
-      -e 's/$/<br>/'
+      -e '/<h[34]/!s/$/<br>/' | sed '/<\/h[34]>/{N;s/\n<br>//;}'
   else
     echo "AI insights unavailable"
   fi
@@ -713,18 +812,20 @@ Be direct. Use **bold** for emphasis."
 send_email() {
   local subject="$1"
   local body="$2"
+  local recipients_list="$3"
 
-  if [[ -z "$email_to" ]]; then
+  if [[ -z "$recipients_list" ]]; then
     log_error "No email recipient configured"
     return 1
   fi
 
   # Convert comma-separated emails to space-separated for msmtp
-  local recipients="${email_to//,/ }"
+  local recipients="${recipients_list//,/ }"
 
   msmtp -a gmail $recipients << MAIL
 From: $email_from
-To: $email_to
+To: $email_from
+Bcc: $recipients_list
 Subject: $subject
 MIME-Version: 1.0
 Content-Type: text/html; charset=UTF-8
@@ -751,7 +852,7 @@ run_summary() {
   fi
 
   case "$report_type" in
-    open|midday|close|test) ;;
+    open|intra|close|test) ;;
     *)
       log_error "Invalid report type: $report_type"
       exit 1
@@ -827,6 +928,30 @@ run_summary() {
   local report_html=$(cat "$HTML_FILE")
   rm -f "$HTML_FILE"
 
+  # Build subject line and header labels
+  local day_of_week=$(date +'%A')
+  local report_label=""
+  case "$CURRENT_REPORT_TYPE" in
+    open)   report_label="Open" ;;
+    intra) report_label="Intra" ;;
+    close)  report_label="Close" ;;
+    *)      report_label="${CURRENT_REPORT_TYPE^}" ;;
+  esac
+  local subject="[Stocks]: ${day_of_week} ${report_label}"
+
+  # Build formatted date: "Tuesday Feb. 3rd 2026 @ 6:35AM PST"
+  local day_num=$(date +'%-d')
+  local ordinal_suffix="th"
+  case "$day_num" in
+    1|21|31) ordinal_suffix="st" ;;
+    2|22)    ordinal_suffix="nd" ;;
+    3|23)    ordinal_suffix="rd" ;;
+  esac
+  local month_abbr=$(date +'%b')
+  local year=$(date +'%Y')
+  local time_formatted=$(date +'%-I:%M%p %Z' | sed 's/AM/AM/;s/PM/PM/')
+  local header_date="${day_of_week} ${month_abbr}. ${day_num}${ordinal_suffix} ${year} @ ${time_formatted}"
+
   # Build full email
   local full_html="<!DOCTYPE html>
 <html>
@@ -834,61 +959,70 @@ run_summary() {
 <body style=\"margin:0;padding:20px;background-color:#f3f4f6;font-family:Arial,sans-serif\">
 <div style=\"max-width:800px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 4px 6px rgba(0,0,0,0.1)\">
 <div style=\"background:linear-gradient(135deg,#1e40af 0%,#3b82f6 100%);color:white;padding:25px;text-align:center\">
-<h1 style=\"margin:0;font-size:24px\">Stock Market Summary</h1>
-<p style=\"margin:8px 0 0 0;opacity:0.9\">${report_type^^} Report - ${ts_display}</p>
+<h1 style=\"margin:0;font-size:24px\">Stock Market ${report_label}</h1>
+<p style=\"margin:8px 0 0 0;opacity:0.9\">${header_date}</p>
 </div>
 <div style=\"padding:25px\">
 ${summary_html}
-${report_html}
-<div style=\"background:#f8fafc;border-left:4px solid #3b82f6;padding:20px;margin-top:25px;border-radius:0 8px 8px 0\">
+<div style=\"background:#f8fafc;border-left:4px solid #3b82f6;padding:20px;margin-bottom:25px;border-radius:0 8px 8px 0\">
 <h2 style=\"color:#1e40af;margin:0 0 15px 0;font-size:18px\">AI Insights</h2>
 <div style=\"color:#374151;line-height:1.6\">${ai_html}</div>
 </div>
+${report_html}
 </div>
 <div style=\"background:#1f2937;color:#9ca3af;padding:15px;text-align:center;font-size:12px\">
-Generated: ${ts_display}
+Generated by zack@zacks-lab.com, ${ts_display}
 </div>
 </div>
 </body>
 </html>"
 
-  # Build subject line: [Stocks]: Day-of-week Report-type
-  local day_of_week=$(date +'%A')
-  local report_label=""
-  case "$CURRENT_REPORT_TYPE" in
-    open)   report_label="Open" ;;
-    midday) report_label="Mid-day" ;;
-    close)  report_label="Close" ;;
-    *)      report_label="${CURRENT_REPORT_TYPE^}" ;;
-  esac
+  # Get recipients based on report type (test mode uses email_test only)
+  local report_type_for_recipients="$CURRENT_REPORT_TYPE"
+  [[ "$test_mode" == "true" ]] && report_type_for_recipients="test"
+  local recipients=$(get_recipients_for_report "$report_type_for_recipients")
 
-  local subject="[Stocks]: ${day_of_week} ${report_label}"
+  if [[ -z "$recipients" ]]; then
+    log_error "No recipients configured for report type: $report_type_for_recipients"
+    return 1
+  fi
 
   if [[ "$test_mode" == "true" ]]; then
     echo "=========================================="
     echo "TEST MODE"
     echo "=========================================="
-    echo "To: $email_to"
+    echo "To: $recipients"
     echo "Subject: $subject"
     echo ""
     echo "Summary:"
     echo "  Best Ticker: ${SUMMARY_BEST_TICKER} ${SUMMARY_BEST_TICKER_PCT}"
     echo "  Worst Ticker: ${SUMMARY_WORST_TICKER} ${SUMMARY_WORST_TICKER_PCT}"
-    echo "  Best Category: ${SUMMARY_BEST_CATEGORY} ${SUMMARY_BEST_CATEGORY_PCT}"
-    echo "  Worst Category: ${SUMMARY_WORST_CATEGORY} ${SUMMARY_WORST_CATEGORY_PCT}"
+    echo "  Top 3 Categories:"
+    printf '%s\n' "${CATEGORY_RANKINGS[@]}" | sort -t'|' -k1 -rn | head -3 | while IFS='|' read -r pct cat; do
+      [[ -z "$cat" ]] && continue
+      local sign=""; [[ "${pct:0:1}" != "-" ]] && sign="+"
+      echo "    • ${cat} ${sign}${pct}%"
+    done
+    echo "  Bottom 3 Categories:"
+    printf '%s\n' "${CATEGORY_RANKINGS[@]}" | sort -t'|' -k1 -n | head -3 | while IFS='|' read -r pct cat; do
+      [[ -z "$cat" ]] && continue
+      local sign=""; [[ "${pct:0:1}" != "-" ]] && sign="+"
+      echo "    • ${cat} ${sign}${pct}%"
+    done
     echo "  Breadth: ${SUMMARY_ADVANCERS} up / ${SUMMARY_DECLINERS} down / ${SUMMARY_UNCHANGED} flat"
     echo ""
     echo "AI Insights:"
     echo "$ai_insights"
     echo "=========================================="
+  fi
+
+  log "Sending email..."
+  if send_email "$subject" "$full_html" "$recipients"; then
+    log "Email sent to: $recipients"
+    log "Summary complete"
   else
-    log "Sending email..."
-    if send_email "$subject" "$full_html"; then
-      log "Email sent to: $email_to"
-      log "Summary complete"
-    else
-      log_error "Failed to send email"
-    fi
+    log_error "Failed to send email"
+    return 1
   fi
 }
 

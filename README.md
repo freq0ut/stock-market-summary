@@ -1,14 +1,14 @@
 # Stock Market Summary
 
-A bash-based tool that sends AI-powered stock market summary emails 3x daily (market open, midday, close). Features categorized watchlists, color-coded HTML reports, and daily progression tracking.
+A bash-based tool that sends AI-powered stock market summary emails 3x daily (market open, intraday, close). Features categorized watchlists, color-coded HTML reports, and daily progression tracking.
 
 ## Features
 
-- **3x Daily Reports**: Automated emails at market open (9:35 AM ET), midday (12:30 PM ET), and close (4:05 PM ET)
+- **3x Daily Reports**: Automated emails at market open (9:35 AM ET), intraday (12:30 PM ET), and close (4:05 PM ET)
 - **AI Insights**: Claude-generated market analysis and commentary
 - **Categorized Watchlist**: Organize tickers by sector (Big Tech, Crypto, Energy, etc.)
 - **HTML Emails**: Color-coded tables (green for gains, red for losses)
-- **Daily Progression**: Track how categories moved throughout the day (open → midday → close)
+- **Daily Progression**: Track how categories moved throughout the day (open → intraday → close)
 - **Market Breadth**: Visual bar showing advancing vs declining tickers
 - **Smart Scheduling**: Automatically skips weekends and US market holidays
 
@@ -112,7 +112,7 @@ Set permissions: `chmod 600 ~/.msmtprc`
 ```bash
 # Run specific report type
 ./stock_summary.sh open
-./stock_summary.sh midday
+./stock_summary.sh intra
 ./stock_summary.sh close
 
 # Test mode (prints to stdout, doesn't send email)
@@ -130,8 +130,8 @@ TZ=America/New_York
 # Market open (9:35 AM ET - 5 min after open)
 35 9 * * 1-5 /path/to/stock_summary.sh open
 
-# Midday (12:30 PM ET)
-30 12 * * 1-5 /path/to/stock_summary.sh midday
+# Intraday (12:30 PM ET)
+30 12 * * 1-5 /path/to/stock_summary.sh intra
 
 # Market close (4:05 PM ET - 5 min after close)
 5 16 * * 1-5 /path/to/stock_summary.sh close
@@ -148,7 +148,7 @@ Each email includes:
 
 2. **Category Tables**
    - Category name with average % change
-   - Daily progression (Open → Midday → Close values)
+   - Daily progression (Open → Intraday → Close values)
    - Individual tickers sorted by % change
    - Color-coded: green (+), red (-), gray (flat)
 
@@ -163,8 +163,8 @@ Each email includes:
 As the day progresses, each report builds on previous data:
 
 - **Open report**: Shows current values only
-- **Midday report**: Shows current + Open values
-- **Close report**: Shows current + Midday + Open values
+- **Intraday report**: Shows current + Open values
+- **Close report**: Shows current + Intraday + Open values
 
 Data resets automatically each trading day.
 
